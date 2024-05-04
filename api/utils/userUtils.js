@@ -120,8 +120,13 @@ export function sendAuthDetails(res, user, statusCode = 200) {
 	res.cookie("refresh", refresh, {
 		maxAge: 7 * 24 * 60 * 60 * 1000,
 		httpOnly: true,
+		secure: process.env.IN_PRODUCTION,
 	});
-	res.status(statusCode).json({ username: user.username, access });
+	res.status(statusCode).json({
+		username: user.username,
+		access,
+		id: user._id,
+	});
 }
 
 /**

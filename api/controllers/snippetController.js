@@ -1,38 +1,50 @@
 import asyncHandler from "express-async-handler";
 import statusCode from "../statusCode.js";
-import { findUserById } from "../utils/userUtils.js";
 import Snippet from "../models/snippetModel.js";
 import User from "../models/userModel.js";
-export const addSnippet = asyncHandler(async (req, res) => {
-	const { title, description, snippet, language } = req.body;
+import { Types } from "mongoose";
 
-	if (!snippet || !language) {
+export const addSnippet = asyncHandler(async (req, res) => {
+	const { title, files } = req.body;
+
+	if (!files || !files.length) {
 		res.status(statusCode.VALIDATION_ERROR);
-		throw new Error("Please Provide both Code and language");
+		throw Error("Please Provide Code File");
 	}
 
+	for (const file of files) {
+		if (!file || !file.language) {
+			res.status(statusCode.VALIDATION_ERROR);
+			throw Error("Please Provide Language of Code");
+		}
+	}
+	const snippetId = new Types.ObjectId();
+
 	const newSnippet = new Snippet({
+		_id: snippetId,
 		user: req.user._id,
 		title,
-		description,
-		snippet,
-		language,
+		files,
 	});
 	await newSnippet.save();
-	res.end("Saved Snippet Successfully");
+	res.send({
+		message: "Saved Snippet Successfully",
+		id: snippetId,
+		user: req.user._id,
+	});
 });
 
 export const findAll = asyncHandler(async (req, res) => {
-	const { q = "", offset = 0, limit = 10 } = req.query;
+	const { q = "", offset = 0, limit = 12 } = req.query;
 
 	const snippets = await Snippet.find(
 		{
 			$or: [
 				{ title: { $regex: q, $options: "i" } },
-				{ language: { $regex: q, $options: "i" } },
+				{ "files.language": { $regex: q, $options: "i" } },
 			],
 		},
-		"_id title language"
+		"_id title files.language"
 	)
 		.skip(offset)
 		.limit(limit);
@@ -42,7 +54,7 @@ export const findAll = asyncHandler(async (req, res) => {
 
 export const getUserSnippets = asyncHandler(async (req, res) => {
 	const { username } = req.params;
-	const { q = "", offset = 0, limit = 10 } = req.query;
+	const { q = "", offset = 0, limit = 12 } = req.query;
 
 	const user = await User.findOne({
 		username,
@@ -57,13 +69,12 @@ export const getUserSnippets = asyncHandler(async (req, res) => {
 		{
 			user: user._id,
 		},
-		"_id title language"
+		"_id title files.language user"
 	)
 		.and({
 			$or: [
 				{ title: { $regex: q, $options: "i" } },
-				{ description: { $regex: q, $options: "i" } },
-				{ language: { $regex: q, $options: "i" } },
+				{ "files.language": { $regex: q, $options: "i" } },
 			],
 		})
 		.skip(offset)
@@ -75,8 +86,6 @@ export const getUserSnippets = asyncHandler(async (req, res) => {
 export const getSnippet = asyncHandler(async (req, res) => {
 	const { id } = req.params;
 
-	console.log(id);
-
 	try {
 		const snippet = await Snippet.findById(id);
 		if (!snippet) throw Error();
@@ -84,7 +93,7 @@ export const getSnippet = asyncHandler(async (req, res) => {
 		res.send(snippet);
 	} catch (error) {
 		res.status(statusCode.VALIDATION_ERROR);
-		res.end("Invalid Id");
+		throw Error("Invalid Id");
 	}
 });
 
@@ -100,20 +109,34 @@ export const deleteSnippet = asyncHandler(async (req, res) => {
 });
 
 export const updateSnippet = asyncHandler(async (req, res) => {
-	const { title, description, snippet, language, id } = req.body;
+	const { title, files, _id } = req.body;
+
+	if (!files || !files.length) {
+		res.status(statusCode.VALIDATION_ERROR);
+		throw Error("Please Provide Code File");
+	}
+
+	for (const file of files) {
+		if (!file || !file.language) {
+			res.status(statusCode.VALIDATION_ERROR);
+			throw Error("Please Provide Language of Code");
+		}
+	}
 
 	const result = await Snippet.updateOne(
 		{
-			_id: id,
+			_id,
 			user: req.user._id,
 		},
 		{
 			title,
-			description,
-			snippet,
-			language,
+			files,
 		}
 	);
-
-	res.send(result);
+	if (result.matchedCount === 1)
+		res.send({ message: "Snippet updated Successfully" });
+	else {
+		res.status(statusCode.VALIDATION_ERROR);
+		throw Error("Snippet Not Found");
+	}
 });

@@ -287,9 +287,10 @@ export const refresh = asyncHandler(async (req, res) => {
 		const refresh = req.cookies["refresh"];
 		const user = getDetailsFromJWT(refresh, "refresh");
 		const access = generateAccessToken(user.sub);
-		res.status(statusCode.ACCEPTED).json({
+		res.status(statusCode.ACCEPTED).send({
 			access,
 			username: user.username,
+			id: user.sub,
 		});
 	} catch (error) {
 		res.status(statusCode.UNAUTHORIZED);
