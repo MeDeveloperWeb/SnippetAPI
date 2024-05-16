@@ -2,6 +2,7 @@ import multiparty from "multiparty";
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
 import { OAuth2Client } from "google-auth-library";
+import sendMail from "../config/nodemailer.js";
 
 /**
  * Parses the sent form and gives the corresponding values as list of string.
@@ -72,7 +73,7 @@ export function generateResetToken(id) {
 	};
 
 	const opts = {
-		expiresIn: "15m",
+		expiresIn: "30m",
 	};
 
 	const reset = jwt.sign(payload, process.env.JWT_RESET_SECRET, opts);
@@ -121,10 +122,13 @@ export function sendAuthDetails(res, user, statusCode = 200) {
 		maxAge: 7 * 24 * 60 * 60 * 1000,
 		httpOnly: true,
 		secure: process.env.IN_PRODUCTION,
+		sameSite: "none",
 	});
 	res.status(statusCode).json({
 		username: user.username,
 		access,
+		refresh,
+		refreshMaxAge: 7 * 24 * 60 * 60 * 1000,
 		id: user._id,
 	});
 }
@@ -137,11 +141,15 @@ export function sendAuthDetails(res, user, statusCode = 200) {
  * @returns jwt_payload
  */
 export function getDetailsFromJWT(jwt_token, verifier) {
-	const secret = `JWT_${verifier.toUpperCase()}_SECRET`;
-	if (!process.env[secret]) throw new Error("Invalid Secret");
-	const secretKey = process.env[secret] || "secret";
-	const token = jwt.verify(jwt_token, secretKey);
-	return token;
+	try {
+		const secret = `JWT_${verifier.toUpperCase()}_SECRET`;
+		if (!process.env[secret]) throw new Error("Invalid Secret");
+		const secretKey = process.env[secret] || "secret";
+		const token = jwt.verify(jwt_token, secretKey);
+		return token;
+	} catch (error) {
+		return null;
+	}
 }
 
 /**
@@ -267,4 +275,17 @@ export async function findUserById(id) {
 	const user = await User.findById(id);
 
 	return user;
+}
+
+export function sendVerificationMail(user) {
+	const token = generateVerificationToken(user.id);
+	sendMail({
+		to: user.email,
+		subject: "Regarding Email Verification!",
+		text: `Hey! This Email was added to the account with username ${
+			user.username
+		}. Click on the following link to verify the email.\nIf this was not you, Please contact us.\nLink: ${
+			process.env.VERIFY_EMAIL_LINK + token
+		} `,
+	});
 }

@@ -7,10 +7,10 @@ import {
 	generateAccessToken,
 	sendAuthDetails,
 	generateResetToken,
-	generateVerificationToken,
 	createUser,
 	createSocialUserWithUniqueUsername,
 	verifyGoogleToken,
+	sendVerificationMail,
 } from "../utils/userUtils.js";
 import sendMail from "../config/nodemailer.js";
 
@@ -99,7 +99,7 @@ export const register = asyncHandler(async (req, res) => {
 	}
 
 	// Credit: https://www.tutorialspoint.com/How-to-validate-email-address-in-JavaScript
-	const emailformat = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+	const emailFormat = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
 
 	// Reject Form Data if required details not available
 	if (!(username && email && password)) {
@@ -112,7 +112,7 @@ export const register = asyncHandler(async (req, res) => {
 		throw new Error("Username Can't have spaces!");
 	}
 
-	if (!email.match(emailformat)) {
+	if (!email.match(emailFormat)) {
 		res.status(statusCode.VALIDATION_ERROR);
 		throw new Error("Invalid Email Address!");
 	}
@@ -121,8 +121,10 @@ export const register = asyncHandler(async (req, res) => {
 		if (err.code === 11000) res.status(400);
 		throw err;
 	});
-	if (user) sendAuthDetails(res, user, statusCode.CREATED);
-	else throw new Error("Something went Wrong!");
+	if (user) {
+		sendVerificationMail(user);
+		sendAuthDetails(res, user, statusCode.CREATED);
+	} else throw new Error("Something went Wrong!");
 });
 
 /**
@@ -294,7 +296,23 @@ export const refresh = asyncHandler(async (req, res) => {
 		});
 	} catch (error) {
 		res.status(statusCode.UNAUTHORIZED);
-		res.end("User not logged in");
+		throw Error("Unauthorized");
+	}
+});
+
+export const refreshViaPOST = asyncHandler(async (req, res) => {
+	try {
+		const refresh = req.body["refresh"];
+		const user = getDetailsFromJWT(refresh, "refresh");
+		const access = generateAccessToken(user.sub);
+		res.status(statusCode.ACCEPTED).send({
+			access,
+			username: user.username,
+			id: user.sub,
+		});
+	} catch (error) {
+		res.status(statusCode.UNAUTHORIZED);
+		throw Error("Unauthorized");
 	}
 });
 
@@ -327,11 +345,7 @@ export const refresh = asyncHandler(async (req, res) => {
  */
 export const changeUsername = asyncHandler(async (req, res) => {
 	try {
-		var {
-			username: [username],
-		} = await asyncFormParser(req).catch((err) => {
-			throw err;
-		});
+		var { username } = req.body;
 	} catch (error) {
 		res.status(statusCode.VALIDATION_ERROR);
 		throw new Error("Please Provide a username!");
@@ -357,7 +371,9 @@ export const changeUsername = asyncHandler(async (req, res) => {
 		throw err;
 	});
 
-	res.status(statusCode.ACCEPTED).send("Username Changed Successfully");
+	res.status(statusCode.ACCEPTED).send({
+		message: "Username Changed Successfully",
+	});
 });
 
 /**
@@ -367,14 +383,10 @@ export const changeUsername = asyncHandler(async (req, res) => {
  */
 export const reqPassword = asyncHandler(async (req, res) => {
 	try {
-		var {
-			username: [username],
-		} = await asyncFormParser(req).catch((err) => {
-			throw err;
-		});
+		var { username } = req.body;
 	} catch (error) {
 		res.status(statusCode.VALIDATION_ERROR);
-		throw new Error("Please Provide a username or Email!");
+		throw new Error("Please Provide a username!");
 	}
 
 	const user = await User.findByUsername(username, false);
@@ -392,9 +404,17 @@ export const reqPassword = asyncHandler(async (req, res) => {
 			user.username
 		}! We got to know You forgot your Password. Click on the following link to create a new password.\n Link: ${
 			process.env.CHANGE_PASSWORD_LINK + reset
-		} If this was not you Please ghost this email.\n Regards,\n Query Wizard `,
+		} If this was not you Please ghost this email.\n Regards,\n Snippet `,
 	});
-	res.end("Reset Password Link sent to the email successfully!");
+	res.send({
+		message: "Reset Password Link sent to the email successfully!",
+	});
+});
+
+export const canChangeForgottenPassword = asyncHandler(async (req, res) => {
+	res.status(statusCode.ACCEPTED).send({
+		message: "Password Can be changed!",
+	});
 });
 
 /**
@@ -404,7 +424,7 @@ export const reqPassword = asyncHandler(async (req, res) => {
  * @access private to user who has the token from the route /get-password
  * @auth Token <token from @route GET /req-password>
  */
-export const forgotPassword = asyncHandler(async (req, res) => {
+export const resetForgottenPassword = asyncHandler(async (req, res) => {
 	try {
 		var {
 			password: [password],
@@ -419,7 +439,9 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 	await user.setPassword(password);
 	await user.save();
 
-	res.status(statusCode.ACCEPTED).send("Password Changed Successfully");
+	res.status(statusCode.ACCEPTED).send({
+		message: "Password Changed Successfully",
+	});
 });
 
 export const changePassword = asyncHandler(async (req, res) => {
@@ -445,7 +467,45 @@ export const changePassword = asyncHandler(async (req, res) => {
 	});
 	await user.save();
 
-	res.status(statusCode.ACCEPTED).send("Password Changed Successfully");
+	res.status(statusCode.ACCEPTED).send({
+		message: "Password Changed Successfully",
+	});
+});
+
+export const changeEmail = asyncHandler(async (req, res) => {
+	try {
+		var { email } = req.body;
+	} catch (error) {
+		res.status(statusCode.VALIDATION_ERROR);
+		throw new Error("Please Provide a valid Email");
+	}
+	// Credit: https://www.tutorialspoint.com/How-to-validate-email-address-in-JavaScript
+	const emailFormat = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+
+	if (!email || !email.match(emailFormat)) {
+		res.status(statusCode.VALIDATION_ERROR);
+		throw new Error("Invalid Email Address!");
+	}
+
+	const user = req.user;
+	if (email === user?.email) {
+		res.status(statusCode.VALIDATION_ERROR);
+		throw new Error("Provide A different Email than the existing one.");
+	}
+
+	user.set("email", email);
+	await user.save().catch((err) => {
+		if (err.code === 11000) {
+			res.status(statusCode.VALIDATION_ERROR);
+			throw new Error("Email already Exists!");
+		}
+		throw err;
+	});
+
+	res.status(statusCode.ACCEPTED).send({
+		message:
+			"Email Changed Successfully! Please check your mailbox for verification link.",
+	});
 });
 
 export const reqEmailVerification = asyncHandler(async (req, res) => {
@@ -454,26 +514,20 @@ export const reqEmailVerification = asyncHandler(async (req, res) => {
 		res.status(statusCode.VALIDATION_ERROR);
 		throw new Error("Email Already Verified!");
 	}
-	const token = generateVerificationToken(user.id);
-	sendMail({
-		to: user.email,
-		subject: "Regarding Email Verification!",
-		text: `Hey! This Email was added to the account with username ${
-			user.username
-		}. Click on the following link to verify the email.\nIf this was not you, Please contact us.\nLink: ${
-			process.env.CHANGE_PASSWORD_LINK + token
-		} `,
+	sendVerificationMail(user);
+	res.send({
+		message: "Email verification Link sent to the email successfully!",
 	});
-	res.end("Email verification Link sent to the email successfully!");
 });
 
 export const verifyEmail = asyncHandler(async (req, res) => {
-	const verifier = req.body["token"];
+	const verifier = req.params["token"];
 	try {
 		var token = getDetailsFromJWT(verifier, "verify");
 	} catch (error) {
+		console.log(error);
 		res.status(statusCode.VALIDATION_ERROR);
-		throw new Error("Invalid Link!");
+		throw new Error("Invalid Link or Link Expired!");
 	}
 	const user = await User.findById(token.sub);
 	if (!user) {
@@ -486,16 +540,18 @@ export const verifyEmail = asyncHandler(async (req, res) => {
 	}
 	user.set("email_verified", true);
 	await user.save();
-	res.status(statusCode.ACCEPTED).json("Verified!");
+	res.status(statusCode.ACCEPTED).send({ message: "Verified!" });
 });
 
 export const logout = asyncHandler(async (req, res) => {
 	res.clearCookie("refresh");
-	res.end("User logged Out Successfully!");
+	res.send({
+		message: "User logged Out Successfully!",
+	});
 });
 
 export const getUser = asyncHandler(async (req, res) => {
-	const { username } = req.params;
+	const { username } = req.body;
 	const user = await User.findOne({
 		username,
 	});
@@ -513,9 +569,12 @@ export const findUsers = asyncHandler(async (req, res) => {
 
 	const { offset = 0, limit = 10 } = req.query;
 
-	const users = await User.find({
-		username: { $regex: username, $options: "i" },
-	})
+	const users = await User.find(
+		{
+			username: { $regex: username, $options: "i" },
+		},
+		"username"
+	)
 		.skip(offset)
 		.limit(limit);
 
