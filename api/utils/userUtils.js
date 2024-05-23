@@ -34,7 +34,7 @@ export function generateAccessToken(id) {
 	};
 
 	const opts = {
-		expiresIn: "10m",
+		expiresIn: "3m",
 	};
 
 	const access = jwt.sign(payload, process.env.JWT_ACCESS_SECRET, opts);
